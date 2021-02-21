@@ -32,7 +32,7 @@ font = {'family' : 'DejaVu Sans',
 'size' : fontsize}
 MAX_IMSHOW_POINTS = (4096, 1268)
 
-def overlay_drift(f_event, f_start, f_stop, drift_rate, t_duration, offset=0):
+def overlay_drift(f_event, f_start, f_stop, drift_rate, t_duration, offset=0, alpha=1):
     r'''
     Creates a dashed red line at the recorded frequency and drift rate of
     the plotted event - can overlay the signal exactly or be offset by
@@ -46,13 +46,13 @@ def overlay_drift(f_event, f_start, f_stop, drift_rate, t_duration, offset=0):
                  (10, 10),
                  "o-",
                  c='#cc0000',
-                 lw=2)
+                 lw=2, alpha=alpha)
 
     # plots drift overlay line, with offset if desired
     plt.plot((f_event + offset, f_event + drift_rate/1e6 * t_duration + offset),
              (0, t_duration),
              c='#cc0000',
-             ls='dashed', lw=2)
+             ls='dashed', lw=2, alpha=alpha)
 
 def plot_waterfall(fil, source_name, f_start=None, f_stop=None, **kwargs):
     r"""
@@ -130,7 +130,8 @@ def plot_waterfall(fil, source_name, f_start=None, f_stop=None, **kwargs):
     return this_plot
 
 def make_waterfall_plots(fil_file_list, on_source_name, f_start, f_stop, drift_rate, f_mid,
-                         filter_level, source_name_list, offset=0, **kwargs):
+                         filter_level, source_name_list, offset=0,
+                         plot_all_hits=False, hits_dataframe=None, **kwargs):
     r'''
     Makes waterfall plots of an event for an entire on-off cadence.
 
@@ -174,6 +175,18 @@ def make_waterfall_plots(fil_file_list, on_source_name, f_start, f_stop, drift_r
 
     # get directory path for storing PNG files
     dirpath = dirname(fil_file_list[0]) + '/'
+    
+    #if plottinng all events deterimine how wide to make the subplots
+    if plot_all_hits:
+        f_start=1e6
+        f_stop=0
+        for i in range(len(hits_dataframe)):
+            on_source_name, start, stop, drift_rate, f_mid = candidate_parameters(hits_dataframe.iloc[i], 
+                                                                                          fil_file_list)
+            if start < f_start:
+                f_start=start
+            if stop > f_stop:
+                f_stop=stop
 
     # read in data for the first panel
     fil1 = bl.Waterfall(fil_file_list[0], f_start=f_start, f_stop=f_stop)
@@ -210,14 +223,21 @@ def make_waterfall_plots(fil_file_list, on_source_name, f_start, f_stop, drift_r
                                    f_start=f_start,
                                    f_stop=f_stop,
                                    **kwargs)
-
+       
         # calculate parameters for estimated drift line
         t_elapsed = Time(fil.header['tstart'], format='mjd').unix - Time(t0, format='mjd').unix
         t_duration = (fil.n_ints_in_file - 1) * fil.header['tsamp']
         f_event = f_mid + drift_rate / 1e6 * t_elapsed
 
         # plot estimated drift line
-        overlay_drift(f_event, f_start, f_stop, drift_rate, t_duration, offset)
+        if plot_all_hits:
+            for i in range(len(hits_dataframe)):
+                on_source_name, start, stop, drift_rate, f_mid = candidate_parameters(hits_dataframe.iloc[i], 
+                                                                                          fil_file_list)
+                f_event = f_mid + drift_rate / 1e6 * t_elapsed
+                overlay_drift(f_event, start, stop, drift_rate, t_duration, offset, alpha=0.5)
+        else:
+            overlay_drift(f_event, f_start, f_stop, drift_rate, t_duration, offset)
 
         # Title the full plot
         if i == 0:
@@ -260,7 +280,7 @@ def make_waterfall_plots(fil_file_list, on_source_name, f_start, f_stop, drift_r
     return subplots
 
 def plot_candidate_events(candidate_event_dataframe, fil_file_list, filter_level, source_name_list,
-                          offset=0, plot_snr_list=False, **kwargs):
+                          offset=0, plot_snr_list=False, plot_all_hits=False, **kwargs):
     r'''
     Calls :func:`~make_waterfall_plots` on each event in the input .csv file.
 
@@ -329,45 +349,117 @@ def plot_candidate_events(candidate_event_dataframe, fil_file_list, filter_level
     if len_df < 1:
         print('*** plot_candidate_events: len(candidate_event_dataframe) = 0, nothing to do.')
         return
-    for i in range(0, len_df):
-        candidate = candidate_event_dataframe.iloc[i]
-        on_source_name = candidate['Source']
-        f_mid = candidate['Freq']
-        drift_rate = candidate['DriftRate']
-
-        # calculate the length of the total cadence from the fil files' headers
-        first_fil = bl.Waterfall(fil_file_list[0], load_data=False)
-        tfirst = first_fil.header['tstart']
-        last_fil = bl.Waterfall(fil_file_list[-1], load_data=False)
-        tlast = last_fil.header['tstart']
-        t_elapsed = Time(tlast, format='mjd').unix - Time(tfirst, format='mjd').unix + (last_fil.n_ints_in_file -1) * last_fil.header['tsamp']
-
-        # calculate the width of the plot based on making sure the full drift is visible
-        bandwidth = 2.4 * abs(drift_rate)/1e6 * t_elapsed
-        bandwidth = np.max((bandwidth, 500./1e6))
-
-        # Get start and stop frequencies based on midpoint and bandwidth
-        f_start, f_stop = np.sort((f_mid - (bandwidth/2),  f_mid + (bandwidth/2)))
-
-        # logger_plot_event.debug useful values
-        logger_plot_event.debug('*************************************************')
-        logger_plot_event.debug('***     The Parameters for This Plot Are:    ****')
-        logger_plot_event.debug('Target = {}'.format(on_source_name))
-        logger_plot_event.debug('Bandwidth = {} MHz'.format(round(bandwidth, 5)))
-        logger_plot_event.debug('Time Elapsed (inc. Slew) = {} s'.format(round(t_elapsed)))
-        logger_plot_event.debug('Middle Frequency = {} MHz'.format(round(f_mid, 4)))
-        logger_plot_event.debug('Expected Drift = {} Hz/s'.format(round(drift_rate, 4)))
-        logger_plot_event.debug('*************************************************')
-
-        # Pass info to make_waterfall_plots() function
+    if plot_all_hits:
+        print("You wanted to plot all hits on a single waterfall plot")
+        print("But will only make one png")
+        candidate = candidate_event_dataframe.iloc[0]
+        on_source_name, f_start, f_stop, drift_rate, f_mid = candidate_parameters(candidate, fil_file_list)
         make_waterfall_plots(fil_file_list,
-                             on_source_name,
-                             f_start,
-                             f_stop,
-                             drift_rate,
-                             f_mid,
-                             filter_level,
-                             source_name_list,
-                             offset=offset,
-                             **kwargs)
+                                 on_source_name,
+                                 f_start,
+                                 f_stop,
+                                 drift_rate,
+                                 f_mid,
+                                 filter_level,
+                                 source_name_list,
+                                 offset=offset,
+                                 plot_all_hits=plot_all_hits, 
+                                 hits_dataframe=candidate_event_dataframe, **kwargs)
+    else:
+        for i in range(0, len_df):
+            candidate = candidate_event_dataframe.iloc[i]
+            on_source_name = candidate['Source']
+            f_mid = candidate['Freq']
+            drift_rate = candidate['DriftRate']
+    
+            # calculate the length of the total cadence from the fil files' headers
+            first_fil = bl.Waterfall(fil_file_list[0], load_data=False)
+            tfirst = first_fil.header['tstart']
+            last_fil = bl.Waterfall(fil_file_list[-1], load_data=False)
+            tlast = last_fil.header['tstart']
+            t_elapsed = Time(tlast, format='mjd').unix - Time(tfirst, format='mjd').unix + (last_fil.n_ints_in_file -1) * last_fil.header['tsamp']
+    
+            # calculate the width of the plot based on making sure the full drift is visible
+            bandwidth = 2.4 * abs(drift_rate)/1e6 * t_elapsed
+            bandwidth = np.max((bandwidth, 500./1e6))
+    
+            # Get start and stop frequencies based on midpoint and bandwidth
+            f_start, f_stop = np.sort((f_mid - (bandwidth/2),  f_mid + (bandwidth/2)))
+    
+            # logger_plot_event.debug useful values
+            logger_plot_event.debug('*************************************************')
+            logger_plot_event.debug('***     The Parameters for This Plot Are:    ****')
+            logger_plot_event.debug('Target = {}'.format(on_source_name))
+            logger_plot_event.debug('Bandwidth = {} MHz'.format(round(bandwidth, 5)))
+            logger_plot_event.debug('Time Elapsed (inc. Slew) = {} s'.format(round(t_elapsed)))
+            logger_plot_event.debug('Middle Frequency = {} MHz'.format(round(f_mid, 4)))
+            logger_plot_event.debug('Expected Drift = {} Hz/s'.format(round(drift_rate, 4)))
+            logger_plot_event.debug('*************************************************')
+    
+            # Pass info to make_waterfall_plots() function
+            make_waterfall_plots(fil_file_list,
+                                 on_source_name,
+                                 f_start,
+                                 f_stop,
+                                 drift_rate,
+                                 f_mid,
+                                 filter_level,
+                                 source_name_list,
+                                 offset=offset,
+                                 **kwargs)
 
+
+
+def candidate_parameters(candidate, fil_file_list):
+    r'''
+
+    Parameters
+    ----------
+    candidate : TYPE
+        DESCRIPTION.
+    fil_file_list : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    on_source_name : TYPE
+        DESCRIPTION.
+    f_start : TYPE
+        DESCRIPTION.
+    f_stop : TYPE
+        DESCRIPTION.
+    drift_rate : TYPE
+        DESCRIPTION.
+    f_mid : TYPE
+        DESCRIPTION.
+
+    '''
+    on_source_name = candidate['Source']
+    f_mid = candidate['Freq']
+    drift_rate = candidate['DriftRate']
+    
+    # calculate the length of the total cadence from the fil files' headers
+    first_fil = bl.Waterfall(fil_file_list[0], load_data=False)
+    tfirst = first_fil.header['tstart']
+    last_fil = bl.Waterfall(fil_file_list[-1], load_data=False)
+    tlast = last_fil.header['tstart']
+    t_elapsed = Time(tlast, format='mjd').unix - Time(tfirst, format='mjd').unix + (last_fil.n_ints_in_file -1) * last_fil.header['tsamp']
+    
+    # calculate the width of the plot based on making sure the full drift is visible
+    bandwidth = 2.4 * abs(drift_rate)/1e6 * t_elapsed
+    bandwidth = np.max((bandwidth, 500./1e6))
+    
+    # Get start and stop frequencies based on midpoint and bandwidth
+    f_start, f_stop = np.sort((f_mid - (bandwidth/2),  f_mid + (bandwidth/2)))
+    
+    # logger_plot_event.debug useful values
+    logger_plot_event.debug('*************************************************')
+    logger_plot_event.debug('***     The Parameters for This Plot Are:    ****')
+    logger_plot_event.debug('Target = {}'.format(on_source_name))
+    logger_plot_event.debug('Bandwidth = {} MHz'.format(round(bandwidth, 5)))
+    logger_plot_event.debug('Time Elapsed (inc. Slew) = {} s'.format(round(t_elapsed)))
+    logger_plot_event.debug('Middle Frequency = {} MHz'.format(round(f_mid, 4)))
+    logger_plot_event.debug('Expected Drift = {} Hz/s'.format(round(drift_rate, 4)))
+    logger_plot_event.debug('*************************************************')
+    
+    return on_source_name,f_start, f_stop, drift_rate, f_mid

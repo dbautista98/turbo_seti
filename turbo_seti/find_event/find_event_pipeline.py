@@ -235,3 +235,52 @@ def find_event_pipeline(dat_file_list_str, SNR_cut=10, check_zero_drift=False, f
             print("Sorry, no events to save :(")
 
     return find_event_output_dataframe
+
+
+def all_hits(dat_file_list_str, SNR_cut=10, check_zero_drift=False, filter_threshold=1, csv_name=None, saving=True):
+    """
+    Takes all .dat files and combines them into a single .csv file containing information 
+    about all the hits detected, without searching for a candidate in the on/off
+
+    Returns
+    -------
+    None.
+
+    """
+    dat_file_list = open(dat_file_list_str).readlines()
+    dat_file_list = [files.replace('\n','') for files in dat_file_list]
+    dat_file_list = [files.replace(',','') for files in dat_file_list]
+    
+    source_name_list = [] 
+    for dat in dat_file_list:
+        source_name = get_source_name(dat)
+        print("find_event_pipeline: source_name =", source_name)
+        source_name_list.append(source_name)
+    
+    data_frames = []
+    for dat in dat_file_list:
+        data_frames.append(find_event.read_dat(dat))
+    all_hits_dataframe = pd.concat(data_frames)
+    
+    # select just the values with SNR above the threshold
+    all_hits_dataframe = all_hits_dataframe[all_hits_dataframe["SNR"] >= SNR_cut]
+    
+    # removes the zero drift rates unless specified to keep them
+    if not check_zero_drift:
+        all_hits_dataframe = all_hits_dataframe[all_hits_dataframe["DriftRate"] != 0]
+    
+    if saving:
+        if csv_name is None:
+            prefix = os.path.dirname(dat_file_list[0]) + '/' + source_name_list[0]
+            if check_zero_drift:
+                filestring = prefix + '_f' + str(filter_threshold) + '_snr' + str(SNR_cut) + '_zero' + '.csv'
+            else:
+                filestring = prefix + '_f' + str(filter_threshold) + '_snr' + str(SNR_cut) + '.csv'            
+        else:
+            filestring = csv_name
+        if not isinstance(all_hits_dataframe, list):
+            all_hits_dataframe.to_csv(filestring)
+            print("find_event_pipeline: Saved CSV file to {}".format(filestring))
+        else:
+            print("Sorry, no events to save :(")
+        
