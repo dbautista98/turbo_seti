@@ -237,7 +237,7 @@ def find_event_pipeline(dat_file_list_str, SNR_cut=10, check_zero_drift=False, f
     return find_event_output_dataframe
 
 
-def all_hits(dat_file_list_str, SNR_cut=10, check_zero_drift=False, filter_threshold=1, csv_name=None, saving=True):
+def all_hits(dat_file_list_str, SNR_cut=10, check_zero_drift=False, filter_threshold=1, window=None, csv_name=None, saving=True):
     """
     Takes all .dat files and combines them into a single .csv file containing information 
     about all the hits detected, without searching for a candidate in the on/off
@@ -268,6 +268,11 @@ def all_hits(dat_file_list_str, SNR_cut=10, check_zero_drift=False, filter_thres
     # removes the zero drift rates unless specified to keep them
     if not check_zero_drift:
         all_hits_dataframe = all_hits_dataframe[all_hits_dataframe["DriftRate"] != 0]
+    
+    #selects hits within the window 
+    if window != None:
+        all_hits_dataframe = all_hits_dataframe[all_hits_dataframe["Freq"] >= window[0]]
+        all_hits_dataframe = all_hits_dataframe[all_hits_dataframe["Freq"] <= window[1]]
     
     if saving:
         if csv_name is None:
